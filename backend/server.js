@@ -2,6 +2,7 @@ const express=require("express")
 const app=express();
 const colors=require("colors")
 const cors=require("cors");
+const cookieParser=require("cookie-parser")
 const useRouter=require("./router/useRouter")
 const connectDB = require( "./config/db" );
 require("dotenv").config()
@@ -9,6 +10,7 @@ require("dotenv").config()
 const port=process.env.PORT;
 connectDB();
 app.use(express.json());
+app.use(cookieParser())
 
 
 app.use("/authuser",useRouter)
