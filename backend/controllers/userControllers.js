@@ -126,8 +126,54 @@ const logOut = asyncHandler(async (req, res) => {
   }
 });
 
-module.exports = logOut;
+const refreshAccessToken = asyncHandler(async (req, res) => {
+  const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken;
+
+  if (!incomingRefreshToken) {
+    return res.status(404).json({ message: "Something went wrong during the process" });
+  }
+
+  try {
+    const decodedToken = jwt.verify(incomingRefreshToken, 'your-secret-key');
+
+    const user = await User.findById(decodedToken?.userId);
+
+    if (!user) {
+      return res.status(404).json({ message: "Invalid Refresh token" });
+    }
+
+    if (incomingRefreshToken !== user?.refreshToken) {
+      return res.status(401).json({ message: "Refresh token expired or used" });
+    }
+
+    const accessToken = jwt.sign({ userId: user._id }, 'your-secret-key', { expiresIn: '24h' });
+    const newRefreshToken = jwt.sign({ userId: user._id }, 'your-refresh-secret', { expiresIn: '7d' });
+
+    user.refreshToken = newRefreshToken;
+    await user.save();
+
+    const options = {
+      httpOnly: true,
+      secure: true,
+    };
+
+    return res.status(200)
+      .cookie("accessToken", accessToken, options)
+      .cookie("refreshToken", newRefreshToken, options)
+      .json(new ApiResponse(200, { accessToken, refreshToken: newRefreshToken }, "Tokens refreshed successfully"));
+  } catch (error) {
+    return res.status(500).json({ message: "Error refreshing tokens" });
+  }
+});
+
+module.exports = { getUser, createUser, logInUser, logOut, refreshAccessToken };
 
 
-module.exports = { getUser, createUser, logInUser,logOut };
+module.exports = { getUser, createUser, logInUser, logOut, refreshAccessToken };
+
+
+
+ 
+
+
 
