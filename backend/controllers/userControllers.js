@@ -130,11 +130,11 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
   const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken;
 
   if (!incomingRefreshToken) {
-    return res.status(404).json({ message: "Something went wrong during the process" });
+    return res.status(404).json({ message: "Refresh token not found" });
   }
 
   try {
-    const decodedToken = jwt.verify(incomingRefreshToken, 'your-secret-key');
+    const decodedToken = jwt.verify(incomingRefreshToken, 'your-refresh-secret');
 
     const user = await User.findById(decodedToken?.userId);
 
@@ -155,12 +155,17 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
     const options = {
       httpOnly: true,
       secure: true,
+      sameSite: 'strict', // Set your preferred sameSite option
     };
 
-    return res.status(200)
-      .cookie("accessToken", accessToken, options)
-      .cookie("refreshToken", newRefreshToken, options)
-      .json(new ApiResponse(200, { accessToken, refreshToken: newRefreshToken }, "Tokens refreshed successfully"));
+    res.cookie("accessToken", accessToken, options);
+    res.cookie("refreshToken", newRefreshToken, options);
+
+    return res.status(200).json({
+      accessToken,
+      refreshToken: newRefreshToken,
+      message: "Tokens refreshed successfully"
+    });
   } catch (error) {
     return res.status(500).json({ message: "Error refreshing tokens" });
   }
@@ -169,7 +174,7 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 module.exports = { getUser, createUser, logInUser, logOut, refreshAccessToken };
 
 
-module.exports = { getUser, createUser, logInUser, logOut, refreshAccessToken };
+
 
 
 
