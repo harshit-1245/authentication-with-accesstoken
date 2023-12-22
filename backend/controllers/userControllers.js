@@ -3,8 +3,22 @@ const User = require( '../models/usermodel' )
 const jwt=require('jsonwebtoken')
 const bcrypt=require('bcrypt')
 const { ApiResponse } = require( '../utils/ApiResponse' )
+require("dotenv").config()
 
+const generateAccessAndRefreshTokens = async (userId) => {
+  try {
+    const user = await User.findById(userId);
+    const accessToken = jwt.sign({ userId: user._id }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '24h' });
+    const refreshToken = jwt.sign({ userId: user._id }, process.env.REFRESH_TOKEN_SECRET, { expiresIn: '7d' });
 
+    user.refreshToken = refreshToken;
+    await user.save({ validateBeforeSave: false });
+
+    return { accessToken, refreshToken };
+  } catch (error) {
+    throw new Error(500, "Something went wrong while generating refresh and access tokens");
+  }
+};
 
 
 
@@ -18,42 +32,55 @@ const getUser=asyncHandler(async(req,res)=>{
   }
 })
 
-const createUser=asyncHandler(async(req,res)=>{
-    const {username,email,password}=req.body;
-    if(!username || !email || !password){
-        res.status(404).json({message:"Please fill required field"})
+const createUser = asyncHandler(async (req, res) => {
+  const { username, email, password } = req.body;
+
+  if (!username || !email || !password) {
+    res.status(404).json({ message: "Please fill required fields" });
+  }
+
+  try {
+    const existedUser = await User.findOne({
+      $or: [{ username }, { email }],
+    });
+
+    if (existedUser) {
+      return res.json({ message: "User or email already registered" });
     }
-   const existedUser=await User.findOne({
-    $or :[{username},{email}]
-   })
-   if(existedUser){
-    res.json({message:"User ALready registered"})
-   }
-   const hashedPassword= await bcrypt.hash(password,10);
 
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-  const user = await   User.create({
+    const user = await User.create({
       email,
-      password:hashedPassword,
-      username: username.toLowerCase()
-    })
-   
-     const token = jwt.sign({userId:user._id},'your-secret-key',{expiresIn:'24h'})
+      password: hashedPassword,
+      username: username.toLowerCase(),
+    });
 
- // i dont want two field so 
- const createdUser = await User.findById(user._id).select('-password -refreshToken');
+    const accessToken = jwt.sign({ userId: user._id }, 'your-secret-key', { expiresIn: '24h' });
+    const refreshToken = jwt.sign({ userId: user._id }, process.env.REFRESH_TOKEN_SECRET, { expiresIn: '7d' });
 
- if(!createdUser){
-  res.status(404).json({message:"Something went wrong while registering"})
- }
-  return res.status(201).json(
-    new ApiResponse(200,{createdUser,token},"User registered successfully")
-  )
-})
+    user.refreshToken = refreshToken;
+    await user.save();
+
+    const createdUser = await User.findById(user._id).select('-password -refreshToken');
+
+    if (!createdUser) {
+      return res.status(404).json({ message: "Something went wrong while registering" });
+    }
+
+    return res.status(201).json(
+      new ApiResponse(200, { createdUser, accessToken, refreshToken }, "User registered successfully")
+    );
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Error registering user" });
+  }
+});
+
 
 const logInUser = asyncHandler(async (req, res) => {
   const { username, email, password } = req.body;
-   
+
   if (!email || !password) {
     return res.status(400).json({ message: "Email and password are required" });
   }
@@ -70,36 +97,33 @@ const logInUser = asyncHandler(async (req, res) => {
     }
 
     const accessToken = jwt.sign({ userId: user._id }, 'your-secret-key', { expiresIn: '24h' });
-    const refreshToken = user.generateRefreshToken(); // Using the user-defined method
+    const refreshToken = user.generateRefreshToken(); // Assuming this method generates a refresh token
 
     await user.save(); // Save the updated user document with the refresh token
 
-      const loggedInUser=await User.findById(user._id).select(
-        "-password -refreshToken"
-      )
-        const options = {
-          httpOnly:true,
-          secure:true,
-        }
+    const loggedInUser = await User.findById(user._id).select("-password -refreshToken");
+    const options = {
+      httpOnly: true,
+      secure: true,
+    };
 
-    // return res.status(200).json({
-    //   message: 'Login successful',
-    //   user: { _id: user._id, username: user.username },
-    //   token,
-    //   refreshToken,
-    // });
-         
-     return res.status(200).cookie("accessToken",accessToken,options).cookie("refreshToken",refreshToken,options)
-     .json(
-      new ApiResponse(200,{
-        user:loggedInUser,accessToken,refreshToken
-      },"User logged in successfully")
-     )
+    return res
+      .status(200)
+      .cookie("accessToken", accessToken, options)
+      .cookie("refreshToken", refreshToken, options)
+      .json(
+        new ApiResponse(200, {
+          user: loggedInUser,
+          accessToken,
+          refreshToken,
+        }, "User logged in successfully")
+      );
 
   } catch (error) {
     return res.status(500).json({ message: 'Error logging in' });
   }
 });
+
 
 const logOut = asyncHandler(async (req, res) => {
   try {
@@ -130,51 +154,55 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
   const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken;
 
   if (!incomingRefreshToken) {
-    return res.status(404).json({ message: "Refresh token not found" });
+    return res.status(401).json({ message: "Unauthorized request" });
   }
 
   try {
-    const decodedToken = jwt.verify(incomingRefreshToken, 'your-refresh-secret');
-
+    const decodedToken = jwt.verify(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET);
+    console.log(decodedToken)
     const user = await User.findById(decodedToken?.userId);
 
     if (!user) {
-      return res.status(404).json({ message: "Invalid Refresh token" });
+      return res.status(404).json({ message: "Unauthorized request" });
     }
 
     if (incomingRefreshToken !== user?.refreshToken) {
-      return res.status(401).json({ message: "Refresh token expired or used" });
+      return res.status(404).json({ message: "Expired token" });
     }
-
-    const accessToken = jwt.sign({ userId: user._id }, 'your-secret-key', { expiresIn: '24h' });
-    const newRefreshToken = jwt.sign({ userId: user._id }, 'your-refresh-secret', { expiresIn: '7d' });
-
-    user.refreshToken = newRefreshToken;
-    await user.save();
 
     const options = {
       httpOnly: true,
       secure: true,
-      sameSite: 'strict', // Set your preferred sameSite option
     };
 
-    res.cookie("accessToken", accessToken, options);
-    res.cookie("refreshToken", newRefreshToken, options);
+    const { accessToken, refreshToken: newRefreshToken } = await generateAccessAndRefreshTokens(user._id);
 
-    return res.status(200).json({
-      accessToken,
-      refreshToken: newRefreshToken,
-      message: "Tokens refreshed successfully"
-    });
+    return res
+      .status(200)
+      .cookie("accessToken", accessToken, options)
+      .cookie("refreshToken", newRefreshToken, options)
+      .json(
+        new ApiResponse(
+          200,
+          { accessToken, refreshToken: newRefreshToken },
+          "Access token refreshed"
+        )
+      );
   } catch (error) {
-    return res.status(500).json({ message: "Error refreshing tokens" });
+    throw new Error(error?.message || "Invalid refresh token");
   }
 });
 
-module.exports = { getUser, createUser, logInUser, logOut, refreshAccessToken };
 
 
 
+ 
+
+
+
+
+
+module.exports = { getUser, createUser, logInUser, logOut,refreshAccessToken };
 
 
 

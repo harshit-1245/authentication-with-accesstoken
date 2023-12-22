@@ -7,7 +7,7 @@ router.route('/').get(getUser)
 router.route('/register').post(createUser)
 router.route('/login').post(logInUser)
 router.route('/logout').post(verifyJwt,logOut)
-router.route('/refreshToken').post(refreshAccessToken)
+router.route('/refresh').post(refreshAccessToken)
 
 module.exports=router;
 
